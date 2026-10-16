@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="de" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>done – Anzeige</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    html, body { height: 100%; overflow: hidden; }
+    body { display: grid; grid-template-rows: auto 1fr; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 2.2vh 3vw; border-bottom: 1px solid var(--line); }
+    header b { font-size: clamp(20px, 3vh, 40px); }
+    .clock { font-family: var(--mono); font-size: clamp(18px, 2.6vh, 34px); color: var(--ink-2); }
+    .board { display: grid; grid-template-columns: 1.6fr 1fr; min-height: 0; }
+    @media (max-width: 760px) { .board { grid-template-columns: 1fr; } }
+    .pane { padding: 3vh 3vw; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+    .pane + .pane { border-left: 1px solid var(--line); }
+    .pane h2 { font-size: clamp(18px, 3vh, 36px); color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; }
+    .ready-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(clamp(120px, 15vw, 240px), 1fr)); gap: 2vh; align-content: start; }
+    .ready-grid .n { background: var(--ready); color: #fff; border-radius: 24px; text-align: center; font-size: clamp(56px, 10vh, 140px); font-weight: 800; padding: 1.5vh 0; }
+    .ready-grid .n.fresh { animation: flash 1s ease-in-out 4; }
+    .prep-grid { display: flex; flex-wrap: wrap; gap: 1.4vh; }
+    .prep-grid .n { background: var(--surface-2); border-radius: 16px; font-size: clamp(28px, 5vh, 64px); font-weight: 700; padding: .6vh 1.4vw; color: var(--ink-2); }
+    .empty { color: var(--ink-2); font-size: clamp(18px, 2.6vh, 30px); }
+    .join { margin-top: auto; display: flex; flex-wrap: wrap; gap: 2vw; align-items: center; background: var(--surface); border-radius: 24px; padding: 2vh; }
+    .join img { width: clamp(110px, 20vh, 240px); height: clamp(110px, 20vh, 240px); background: #fff; border-radius: 14px; padding: 8px; flex: none; }
+    .join b { font-size: clamp(18px, 3vh, 36px); display: block; line-height: 1.2; }
+    .join span { color: var(--ink-2); font-size: clamp(14px, 2vh, 24px); }
+    #unlock { position: fixed; inset: 0; background: rgba(0, 0, 0, .75); display: grid; place-items: center; z-index: 10; }
+    @keyframes flash { 50% { transform: scale(1.06); filter: brightness(1.25); } }
+  </style>
+</head>
+<body>
+  <header>
+    <span style="display:flex;align-items:center;gap:14px"><span class="logo-mark" data-mark></span><b id="name">done</b></span>
+    <span class="clock" id="clock"></span>
+  </header>
+  <div class="board">
+    <section class="pane">
+      <h2>Fertig – bitte abholen</h2>
+      <div class="ready-grid" id="ready"></div>
+    </section>
+    <section class="pane">
+      <h2>In Zubereitung</h2>
+      <div class="prep-grid" id="prep"></div>
+      <div class="join">
+        <img id="qr" alt="QR-Code zum Scannen">
+        <div><b>Scannen und Platz nehmen</b><span>Dein Handy klingelt, sobald dein Essen fertig ist. Keine App nötig.</span></div>
+      </div>
+    </section>
+  </div>
+
+  <div id="unlock"><button class="btn btn-accent" style="font-size:22px;padding:20px 36px">🔊 Anzeige mit Ton starten</button></div>
+
+  <script src="/common.js"></script>
+  <script>
+    document.querySelector('[data-mark]').innerHTML = LOGO_SVG;
+    const slug = slugFromPath();
+    const token = tokenFromHash() || (store(`done.staff.${slug}`) || {}).token;
+    const headers = { 'x-staff-token': token };
+    const $ = (id) => document.getElementById(id);
+
+    let known = null; // ids already shown as ready – used to announce only new ones
+    let soundOn = false;
+
+    $('unlock').querySelector('button').onclick = () => {
+      soundOn = true;
+      chime.unlock();
+      chime.play([660, 990]);
+      if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(() => {});
+      $('unlock').remove();
+    };
+
+    function announce(numbers) {
+      if (!soundOn || !numbers.length) return;
+      chime.play([784, 1047, 1319]);
+      if (!('speechSynthesis' in window)) return;
+      const voice = speechSynthesis.getVoices().find((v) => v.lang.startsWith('de'));
+      const text = numbers.length === 1
+        ? `Nummer ${numbers[0]}, bitte abholen.`
+        : `Nummern ${numbers.slice(0, -1).join(', ')} und ${numbers.at(-1)}, bitte abholen.`;
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'de-DE';
+      if (voice) u.voice = voice;
+      u.rate = 0.95;
+      setTimeout(() => speechSynthesis.speak(u), 900);
+    }
+
+    function render(tickets) {
+      const ready = tickets.filter((t) => t.status === 'ready').sort((a, b) => a.readyAt - b.readyAt);
+      const prep = tickets.filter((t) => t.status === 'preparing');
+      const fresh = known ? ready.filter((t) => !known.has(t.id)) : [];
+      known = new Set(ready.map((t) => t.id));
+
+      $('ready').innerHTML = ready.length
+        ? ready.map((t) => `<div class="n num ${fresh.includes(t) ? 'fresh' : ''}">${t.number}</div>`).join('')
+        : '<div class="empty">Gerade ist nichts abholbereit.</div>';
+      $('prep').innerHTML = prep.length
+        ? prep.map((t) => `<div class="n num">${t.number}</div>`).join('')
+        : '<div class="empty">—</div>';
+      announce(fresh.map((t) => t.number));
+    }
+
+    // Rotating QR code: a photo of it stops working after a few minutes.
+    async function refreshCode() {
+      try {
+        const { code, expiresAt } = await api(`/api/r/${encodeURIComponent(slug)}/code`, { headers });
+        $('qr').src = qrSrc(`${location.origin}/r/${slug}?k=${code}`);
+        setTimeout(refreshCode, Math.max(2000, expiresAt - Date.now() + 500));
+      } catch {
+        setTimeout(refreshCode, 10000);
+      }
+    }
+
+    connectSocket({ type: 'staff', slug, token }, (msg) => {
+      if (msg.type === 'state') {
+        $('name').textContent = msg.restaurant.name;
+        document.title = `Anzeige · ${msg.restaurant.name}`;
+        render(msg.tickets);
+      }
+      if (msg.type === 'error') $('ready').innerHTML = '<div class="empty">Kein Zugriff – bitte TV-Link aus der Einrichtung verwenden.</div>';
+    });
+
+    refreshCode();
+    const tick = () => { $('clock').textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }); };
+    tick();
+    setInterval(tick, 10000);
+    if ('speechSynthesis' in window) speechSynthesis.getVoices();
+  </script>
+</body>
+</html>

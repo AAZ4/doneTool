@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>done – Abholruf ohne Pager</title>
+  <meta name="description" content="Dein Gast scannt, du drückst „Fertig“, sein Handy klingelt. Ohne App, ohne Pager.">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .hero { display: grid; gap: 40px; align-items: center; padding: 32px 0 64px; }
+    @media (min-width: 860px) { .hero { grid-template-columns: 1.15fr .85fr; padding-top: 56px; } }
+    .hero h1 { font-size: clamp(40px, 7vw, 72px); font-weight: 850; }
+    .hero h1 em { font-style: normal; color: var(--accent); }
+    .lead { font-size: 19px; color: var(--ink-2); max-width: 34ch; margin: 0 0 28px; }
+    .signup { display: flex; gap: 10px; flex-wrap: wrap; max-width: 520px; }
+    .signup .input { flex: 1 1 240px; }
+    .error { color: var(--accent); font-weight: 600; min-height: 1.5em; margin-top: 10px; }
+
+    .phone { width: min(300px, 100%); margin: 0 auto; border: 10px solid var(--ink); border-radius: 44px; background: var(--surface); padding: 22px 18px 26px; box-shadow: var(--shadow); transform: rotate(-3deg); }
+    .phone .shop { font-weight: 700; display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+    .phone .ticket { background: var(--surface-2); border-radius: 22px; padding: 18px; text-align: center; }
+    .phone .big { font-size: 84px; font-weight: 800; line-height: 1; margin: 6px 0 14px; }
+    .phone .ready { background: var(--ready); color: #fff; border-radius: 999px; padding: 12px; font-weight: 700; margin-top: 16px; text-align: center; }
+
+    .steps { display: grid; gap: 16px; padding-bottom: 72px; }
+    @media (min-width: 760px) { .steps { grid-template-columns: repeat(3, 1fr); } }
+    .step { padding: 24px; }
+    .step b { display: block; font-size: 18px; margin: 8px 0 4px; }
+    .step .n { font-family: var(--mono); color: var(--accent); font-weight: 700; }
+    footer { border-top: 1px solid var(--line); padding: 24px 0 40px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <a class="logo" href="/" data-logo></a>
+    </header>
+
+    <section class="hero">
+      <div>
+        <h1>Weg mit den Pagern.<br><em>Das Handy klingelt.</em></h1>
+        <p class="lead">Dein Gast scannt den Code an der Theke, du drückst „Fertig“ und sein Handy klingelt. Ohne App, ohne Registrierung, ohne Geräte.</p>
+        <form class="signup" id="signup">
+          <input class="input" id="name" name="name" placeholder="z. B. Imbiss Abu Ali" autocomplete="organization" required minlength="2" maxlength="60">
+          <button class="btn btn-accent" type="submit">Kostenlos starten →</button>
+        </form>
+        <div class="error" id="error" role="alert"></div>
+        <p class="muted small">Wir erstellen deinen Laden sofort. Du bekommst einen Kassen-Link, einen QR-Code für die Theke und eine TV-Anzeige.</p>
+      </div>
+
+      <div class="phone" aria-hidden="true">
+        <div class="shop"><span class="logo-mark" data-mark></span> Imbiss Abu Ali</div>
+        <div class="ticket">
+          <div class="muted small">Deine Nummer</div>
+          <div class="big num">27</div>
+          <span class="chip chip-ready"><span class="dot"></span> Fertig – bitte abholen</span>
+        </div>
+        <div class="ready">🔔 Dein Essen ist fertig!</div>
+      </div>
+    </section>
+
+    <section class="steps">
+      <div class="card step"><span class="n">01</span><b>Gast scannt</b><span class="muted">QR-Code an der Theke oder auf dem Fernseher. Im Browser erscheint sofort seine Nummer.</span></div>
+      <div class="card step"><span class="n">02</span><b>Du drückst „Fertig“</b><span class="muted">Auf jedem Handy oder Tablet. Du siehst, wer die Benachrichtigung aktiviert hat.</span></div>
+      <div class="card step"><span class="n">03</span><b>Sein Handy klingelt</b><span class="muted">Reagiert niemand, klingelt es automatisch noch einmal. Der Fernseher sagt die Nummer an.</span></div>
+    </section>
+  </div>
+  <footer><div class="wrap muted small">done · Abholruf für Imbisse, Cafés und Foodtrucks</div></footer>
+
+  <script src="/common.js"></script>
+  <script>
+    document.querySelector('[data-mark]').innerHTML = LOGO_SVG;
+    const form = document.getElementById('signup');
+    const errorEl = document.getElementById('error');
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.textContent = '';
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+      try {
+        const r = await api('/api/restaurants', { method: 'POST', body: { name: form.name.value } });
+        store(`done.staff.${r.slug}`, { token: r.staffToken, name: r.name });
+        location.href = `/start/${encodeURIComponent(r.slug)}#t=${r.staffToken}`;
+      } catch (err) {
+        errorEl.textContent = err.message;
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

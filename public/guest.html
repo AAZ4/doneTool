@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>done – Deine Nummer</title>
+  <meta name="theme-color" content="#ff5a36">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="manifest" id="manifest">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body { min-height: 100dvh; }
+    main { max-width: 440px; margin: 0 auto; padding: 0 16px 32px; display: flex; flex-direction: column; gap: 16px; }
+    .shop { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 0 4px; }
+    .shop b { font-size: 18px; }
+    .ticket { padding: 26px 22px; text-align: center; position: relative; overflow: hidden; }
+    .ticket .big { font-size: clamp(96px, 34vw, 150px); font-weight: 800; line-height: .95; margin: 4px 0 18px; }
+    .ticket hr { border: 0; border-top: 2px dashed var(--line); margin: 0 -22px 18px; }
+
+    .progress { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; text-align: center; font-size: 13px; color: var(--ink-2); }
+    .progress .s { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .progress .b { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; background: var(--surface-2); }
+    .progress .s.on .b { background: var(--ink); color: var(--bg); }
+    .progress .s.now { color: var(--ink); font-weight: 700; }
+    .progress .s.now .b { background: var(--accent); color: #fff; animation: pulse 1.6s ease-in-out infinite; }
+    .progress .s.ok .b { background: var(--ready); color: #fff; }
+
+    .alert-card { padding: 18px; display: flex; gap: 14px; align-items: center; }
+    .alert-card .ico { width: 48px; height: 48px; border-radius: 14px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 24px; flex: none; }
+    .alert-card.active .ico { background: var(--ready); }
+    .hint { font-size: 14px; color: var(--ink-2); padding: 0 4px; }
+    .hint b { color: var(--ink); }
+
+    .center { text-align: center; padding-top: 18vh; }
+    .center .emoji { font-size: 56px; }
+
+    /* Ready / ringing overlay */
+    #ringing { position: fixed; inset: 0; background: var(--ready); color: #fff; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; }
+    #ringing .big { font-size: clamp(120px, 45vw, 200px); font-weight: 800; line-height: 1; animation: bump 1s ease-in-out infinite; }
+    #ringing h1 { font-size: 34px; margin: 0; }
+    #ringing .btn { background: #fff; color: var(--ready); font-size: 20px; padding: 18px 34px; margin-top: 18px; }
+
+    @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 90, 54, .45); } 50% { box-shadow: 0 0 0 8px rgba(255, 90, 54, 0); } }
+    @keyframes bump { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  </style>
+</head>
+<body>
+  <main id="app"><p class="center muted">Lade …</p></main>
+
+  <div id="ringing" class="hidden" role="alertdialog" aria-labelledby="ring-title">
+    <div>Deine Nummer</div>
+    <div class="big num" id="ring-num"></div>
+    <h1 id="ring-title">Dein Essen ist fertig!</h1>
+    <div>Bitte an der Theke abholen.</div>
+    <button class="btn" id="coming">Ich komme!</button>
+  </div>
+
+  <script src="/common.js"></script>
+  <script>
+    const slug = slugFromPath();
+    const key = new URLSearchParams(location.search).get('k');
+    const storeKey = `done.ticket.${slug}`;
+    const app = document.getElementById('app');
+    document.getElementById('manifest').href = `/r/${encodeURIComponent(slug)}/manifest.webmanifest`;
+
+    let saved = store(storeKey);
+    let ticket = null;
+    let ringTimer = null;
+    let wakeLock = null;
+    let lastRingCount = -1;
+
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isStandalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+    const pushSupported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+    function showMessage(emoji, title, text) {
+      app.innerHTML = `<div class="center"><div class="emoji">${emoji}</div><h1>${title}</h1><p class="muted">${text}</p></div>`;
+    }
+
+    async function init() {
+      // Reuse the existing number (reloads must not create a new one).
+      if (saved) {
+        try {
+          const { ticket: t } = await api(`/api/tickets/${saved.id}`, { headers: { 'x-guest-token': saved.token } });
+          if (t.status !== 'done' || !key) return start(t);
+        } catch { /* expired – fall through */ }
+        store(storeKey, null);
+        saved = null;
+      }
+
+      if (!key) {
+        return showMessage('📷', 'Scanne den Code an der Theke', 'Dann bekommst du hier deine Nummer und wir rufen dich, sobald dein Essen fertig ist.');
+      }
+
+      try {
+        const res = await api(`/api/r/${encodeURIComponent(slug)}/tickets`, { method: 'POST', body: { key } });
+        saved = { id: res.ticket.id, token: res.guestToken };
+        store(storeKey, saved);
+        start(res.ticket);
+      } catch (err) {
+        showMessage('⏱️', 'Code abgelaufen', escapeHtml(err.message));
+      }
+    }
+
+    function start(t) {
+      history.replaceState(null, '', `/r/${encodeURIComponent(slug)}`); // drop the entry key from the URL
+      lastRingCount = t.ringCount;
+      render(t);
+      connectSocket({ type: 'guest', id: saved.id, token: saved.token }, (msg) => {
+        if (msg.type === 'ticket') {
+          const shouldRing = msg.ring || (msg.ticket.status === 'ready' && !msg.ticket.coming && msg.ticket.ringCount !== lastRingCount);
+          lastRingCount = msg.ticket.ringCount;
+          render(msg.ticket);
+          if (shouldRing) startRinging();
+        }
+        if (msg.type === 'error') {
+          store(storeKey, null);
+          showMessage('👋', 'Diese Nummer ist abgelaufen', 'Scanne bei deiner nächsten Bestellung einfach wieder den Code.');
+        }
+      });
+      if (t.status === 'ready' && !t.coming) startRinging();
+    }
+
+    function render(t) {
+      ticket = t;
+      document.title = t.status === 'ready' ? `🔔 Nr. ${t.number} ist fertig!` : `Nr. ${t.number} · ${t.restaurantName}`;
+      if (t.status !== 'ready' || t.coming) stopRinging();
+
+      if (t.status === 'done') {
+        app.innerHTML = `
+          <div class="shop"><b>${escapeHtml(t.restaurantName)}</b><span class="logo" style="font-size:16px">${logoHtml()}</span></div>
+          <div class="center" style="padding-top:12vh"><div class="emoji">😋</div><h1>Guten Appetit!</h1>
+          <p class="muted">Nummer ${t.number} wurde abgeholt. Danke, dass du da warst.</p></div>`;
+        return;
+      }
+
+      const step = t.status === 'ready' ? 3 : 2;
+      const stepClass = (n) => (n < step ? 'on' : n === step ? (step === 3 ? 'ok now' : 'now') : '');
+      const statusText = t.status === 'ready'
+        ? (t.coming ? 'Super, wir warten auf dich an der Theke.' : 'Fertig – bitte an der Theke abholen!')
+        : 'Wird gerade zubereitet …';
+
+      app.innerHTML = `
+        <div class="shop"><b>${escapeHtml(t.restaurantName)}</b><span class="logo" style="font-size:16px">${logoHtml()}</span></div>
+        <section class="card ticket">
+          <div class="muted small">Deine Nummer</div>
+          <div class="big num">${t.number}</div>
+          <hr>
+          <div class="progress">
+            <div class="s on"><span class="b">✓</span>Bestellt</div>
+            <div class="s ${stepClass(2)}"><span class="b">2</span>In Zubereitung</div>
+            <div class="s ${stepClass(3)}"><span class="b">3</span>Fertig</div>
+          </div>
+          <p style="margin:18px 0 0;font-weight:600">${statusText}</p>
+        </section>
+        ${alertCard(t)}
+        ${hints(t)}`;
+
+      const btn = document.getElementById('enable');
+      if (btn) btn.onclick = enableAlert;
+    }
+
+    function alertCard(t) {
+      if (t.alert) {
+        return `<section class="card alert-card active"><div class="ico">🔔</div>
+          <div><b>Benachrichtigung aktiv</b><div class="muted small">Wir klingeln, sobald dein Essen fertig ist.</div></div></section>`;
+      }
+      return `<section class="card alert-card"><div class="ico">🔕</div>
+        <div style="flex:1"><b>Damit dein Handy klingelt</b><div class="muted small">Einmal tippen – sonst rufen wir deine Nummer aus.</div></div></section>
+        <button class="btn btn-accent btn-block" id="enable" style="padding:18px">🔔 Benachrichtigung aktivieren</button>`;
+    }
+
+    function hints(t) {
+      if (!t.alert || t.status !== 'preparing') return '';
+      const pushOk = pushSupported && Notification.permission === 'granted';
+      if (pushOk && !isIOS) return '<p class="hint">Du kannst das Handy wegstecken – du bekommst eine Mitteilung.</p>';
+      if (isIOS && !isStandalone) {
+        return '<p class="hint"><b>Lass diese Seite geöffnet</b> und das Handy entsperrt, dann klingelt es hier. ' +
+          'Tipp für iPhone: Über <b>Teilen → Zum Home-Bildschirm</b> bekommst du auch bei gesperrtem Handy eine Mitteilung.</p>';
+      }
+      return '<p class="hint"><b>Lass diese Seite geöffnet</b>, dann klingelt es hier, sobald dein Essen fertig ist.</p>';
+    }
+
+    async function enableAlert() {
+      const btn = document.getElementById('enable');
+      btn.disabled = true;
+      chime.unlock();
+      chime.play([660, 990]);
+      if (navigator.vibrate) navigator.vibrate(80);
+      keepAwake();
+
+      let subscription = null;
+      if (pushSupported) {
+        try {
+          const reg = await navigator.serviceWorker.register('/sw.js');
+          const permission = await Notification.requestPermission();
+          if (permission === 'granted') {
+            const { publicKey } = await api('/api/vapid');
+            subscription = await reg.pushManager.getSubscription() ||
+              await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(publicKey) });
+          }
+        } catch (err) {
+          console.warn('Push nicht verfügbar:', err);
+        }
+      }
+
+      try {
+        const { ticket: t } = await api(`/api/tickets/${saved.id}/alert`, {
+          method: 'POST', headers: { 'x-guest-token': saved.token }, body: { subscription },
+        });
+        render(t);
+      } catch (err) {
+        btn.disabled = false;
+        alert(err.message);
+      }
+    }
+
+    async function keepAwake() {
+      try {
+        if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch { /* not allowed – the hint tells the guest to keep the page open */ }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && ticket && ticket.alert && ticket.status !== 'done') keepAwake();
+    });
+
+    function startRinging() {
+      const overlay = document.getElementById('ringing');
+      document.getElementById('ring-num').textContent = ticket.number;
+      overlay.classList.remove('hidden');
+      clearInterval(ringTimer);
+      let rounds = 0;
+      const once = () => {
+        chime.play();
+        if (navigator.vibrate) navigator.vibrate([400, 150, 400, 150, 700]);
+        if (++rounds >= 15) clearInterval(ringTimer); // ring ~25 s, the server re-rings later if needed
+      };
+      once();
+      ringTimer = setInterval(once, 1700);
+    }
+
+    function stopRinging() {
+      clearInterval(ringTimer);
+      ringTimer = null;
+      if (navigator.vibrate) navigator.vibrate(0);
+      document.getElementById('ringing').classList.add('hidden');
+    }
+
+    document.getElementById('coming').onclick = async () => {
+      stopRinging();
+      try {
+        const { ticket: t } = await api(`/api/tickets/${saved.id}/coming`, { method: 'POST', headers: { 'x-guest-token': saved.token } });
+        render(t);
+      } catch { /* the cashier still sees the number as ready */ }
+    };
+
+    // Any tap unlocks audio (e.g. after a reload, when the guest had already enabled the alert).
+    document.addEventListener('pointerdown', () => chime.unlock(), { passive: true });
+
+    function urlB64ToUint8Array(base64) {
+      const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+      const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>done – Kasse</title>
+  <meta name="theme-color" content="#15171a">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    header.bar { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+    header.bar .wrap { display: flex; align-items: center; gap: 12px; padding-top: 12px; padding-bottom: 12px; }
+    header.bar b { font-size: 18px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .conn.off { background: var(--warn-soft); color: var(--warn); }
+
+    main { padding: 16px 0 96px; }
+    .cols { display: grid; gap: 22px; }
+    @media (min-width: 820px) { .cols { grid-template-columns: 1fr 1fr; align-items: start; } }
+    .col h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .count { background: var(--surface-2); color: var(--ink); border-radius: 999px; padding: 1px 9px; font-size: 13px; }
+    .list { display: grid; gap: 10px; }
+    @media (min-width: 520px) { .list { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); } }
+    @media (min-width: 820px) { .list { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); } }
+
+    .t { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .t-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .t-num { font-size: 44px; font-weight: 800; line-height: 1; }
+    .t-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; font-size: 13px; }
+    .t-actions { display: flex; gap: 8px; }
+    .t-actions .btn { flex: 1; min-width: 0; }
+    .t-actions .btn-small { flex: 0 0 44px; padding: 9px 0; }
+    .t.ready { border-color: var(--ready); }
+    .empty { padding: 22px; text-align: center; color: var(--ink-2); border: 2px dashed var(--line); border-radius: var(--radius); }
+
+    .done-list { display: flex; flex-wrap: wrap; gap: 8px; }
+    .done-list button { appearance: none; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); border-radius: 12px; padding: 6px 12px; font: inherit; font-family: var(--mono); cursor: pointer; }
+    .done-list button:hover { color: var(--ink); border-color: var(--ink); }
+  </style>
+</head>
+<body>
+  <header class="bar">
+    <div class="wrap">
+      <span class="logo-mark" data-mark></span>
+      <b id="name">Kasse</b>
+      <span class="chip conn off" id="conn"><span class="dot"></span> Verbinde …</span>
+      <button class="btn btn-small" id="manual" title="Nummer für Gäste ohne Handy">+ Nummer</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="cols">
+      <section class="col">
+        <h2>In Zubereitung <span class="count" id="c-prep">0</span></h2>
+        <div class="list" id="prep"></div>
+      </section>
+      <section class="col">
+        <h2>Fertig – wartet auf Abholung <span class="count" id="c-ready">0</span></h2>
+        <div class="list" id="ready"></div>
+        <h2 style="margin-top:26px">Abgeholt</h2>
+        <div class="done-list" id="done"></div>
+        <p class="muted small" style="margin-top:8px">Versehentlich abgeschlossen? Nummer antippen, um sie zurückzuholen.</p>
+      </section>
+    </div>
+  </main>
+
+  <div class="toast hidden" id="toast"><span id="toast-text"></span><button class="btn btn-small" id="toast-undo">Rückgängig</button></div>
+
+  <script src="/common.js"></script>
+  <script>
+    document.querySelector('[data-mark]').innerHTML = LOGO_SVG;
+    const slug = slugFromPath();
+    const token = tokenFromHash() || (store(`done.staff.${slug}`) || {}).token;
+    const headers = { 'x-staff-token': token };
+    let tickets = [];
+
+    const $ = (id) => document.getElementById(id);
+
+    function setStatus(id, status) {
+      return api(`/api/r/${encodeURIComponent(slug)}/tickets/${id}/status`, { method: 'POST', headers, body: { status } });
+    }
+
+    function alertChip(t) {
+      if (t.source === 'manual') return '<span class="chip">ohne Handy</span>';
+      if (t.alert) return `<span class="chip chip-ready" title="${t.hasPush ? 'Push aktiv' : 'Seite offen'}">🔔 aktiv</span>`;
+      return '<span class="chip chip-warn">🔕 kein Alarm</span>';
+    }
+
+    function readyChip(t) {
+      if (t.coming) return '<span class="chip chip-ready">🏃 kommt</span>';
+      if (t.source === 'manual' || !t.alert) return '<span class="chip chip-warn">📣 bitte ausrufen</span>';
+      return `<span class="chip">🔔 ${t.ringCount}× geklingelt</span>`;
+    }
+
+    function render() {
+      const prep = tickets.filter((t) => t.status === 'preparing');
+      const ready = tickets.filter((t) => t.status === 'ready');
+      const done = tickets.filter((t) => t.status === 'done');
+      $('c-prep').textContent = prep.length;
+      $('c-ready').textContent = ready.length;
+
+      $('prep').innerHTML = prep.length ? prep.map((t) => `
+        <article class="card t">
+          <div class="t-head">
+            <span class="t-num num">${t.number}</span>
+            <span class="t-meta">${alertChip(t)}<span class="muted num" data-since="${t.createdAt}">${elapsed(t.createdAt)}</span></span>
+          </div>
+          <button class="btn btn-ready btn-block" data-act="ready" data-id="${t.id}">🔔 Fertig</button>
+        </article>`).join('') : '<div class="empty">Keine offenen Bestellungen.<br>Neue Nummern erscheinen automatisch.</div>';
+
+      $('ready').innerHTML = ready.length ? ready.map((t) => `
+        <article class="card t ready">
+          <div class="t-head">
+            <span class="t-num num">${t.number}</span>
+            <span class="t-meta">${readyChip(t)}<span class="muted num" data-since="${t.readyAt}">${elapsed(t.readyAt)}</span></span>
+          </div>
+          <div class="t-actions">
+            <button class="btn btn-block" data-act="done" data-id="${t.id}">Abgeholt</button>
+            ${t.source !== 'manual' && t.alert ? `<button class="btn btn-ghost btn-small" data-act="ring" data-id="${t.id}" title="Nochmal klingeln">🔔</button>` : ''}
+            <button class="btn btn-ghost btn-small" data-act="back" data-id="${t.id}" title="Zurück in Zubereitung">↩</button>
+          </div>
+        </article>`).join('') : '<div class="empty">Noch nichts fertig.</div>';
+
+      $('done').innerHTML = done.length
+        ? done.map((t) => `<button data-act="reopen" data-id="${t.id}" title="Zurück zu „Fertig“">${t.number}</button>`).join('')
+        : '<span class="muted small">Noch nichts abgeholt.</span>';
+    }
+
+    let toastTimer;
+    function toast(text, undo) {
+      $('toast-text').textContent = text;
+      $('toast').classList.remove('hidden');
+      $('toast-undo').onclick = () => { $('toast').classList.add('hidden'); undo(); };
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => $('toast').classList.add('hidden'), 6000);
+    }
+
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const t = tickets.find((x) => x.id === id);
+      btn.disabled = true;
+      try {
+        if (btn.dataset.act === 'ready') {
+          await setStatus(id, 'ready');
+          toast(`Nr. ${t.number} ist fertig – Gast wird gerufen.`, () => setStatus(id, 'preparing'));
+        } else if (btn.dataset.act === 'done') {
+          await setStatus(id, 'done');
+          toast(`Nr. ${t.number} abgeholt.`, () => setStatus(id, 'ready'));
+        } else if (btn.dataset.act === 'back') {
+          await setStatus(id, 'preparing');
+        } else if (btn.dataset.act === 'reopen') {
+          await setStatus(id, 'ready');
+        } else if (btn.dataset.act === 'ring') {
+          await api(`/api/r/${encodeURIComponent(slug)}/tickets/${id}/ring`, { method: 'POST', headers });
+        }
+      } catch (err) {
+        alert(err.message);
+        btn.disabled = false;
+      }
+    });
+
+    $('manual').onclick = async () => {
+      try {
+        const { ticket } = await api(`/api/r/${encodeURIComponent(slug)}/manual`, { method: 'POST', headers });
+        toast(`Neue Nummer: ${ticket.number} – bitte dem Gast sagen.`, () => setStatus(ticket.id, 'done'));
+      } catch (err) { alert(err.message); }
+    };
+
+    connectSocket({ type: 'staff', slug, token }, (msg) => {
+      if (msg.type === 'state') {
+        $('name').textContent = msg.restaurant.name;
+        document.title = `Kasse · ${msg.restaurant.name}`;
+        tickets = msg.tickets;
+        render();
+      }
+      if (msg.type === 'error') {
+        document.querySelector('main').innerHTML = '<div class="empty">Kein Zugriff. Bitte öffne den Kassen-Link aus der Einrichtung erneut.</div>';
+      }
+    }, (online) => {
+      $('conn').className = `chip conn ${online ? 'chip-ready' : 'off'}`;
+      $('conn').innerHTML = `<span class="dot"></span> ${online ? 'Live' : 'Offline'}`;
+    });
+
+    if (token) store(`done.staff.${slug}`, { ...(store(`done.staff.${slug}`) || {}), token });
+
+    setInterval(() => {
+      document.querySelectorAll('[data-since]').forEach((el) => { el.textContent = elapsed(Number(el.dataset.since)); });
+    }, 1000);
+  </script>
+</body>
+</html>
