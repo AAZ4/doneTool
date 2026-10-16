@@ -38,8 +38,11 @@ function save() {
   }, 300);
 }
 
+// On hosts with an ephemeral disk (e.g. Render) set the keys as env vars, otherwise they change on every deploy.
 let vapid;
-if (fs.existsSync(VAPID_FILE)) {
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  vapid = { publicKey: process.env.VAPID_PUBLIC_KEY, privateKey: process.env.VAPID_PRIVATE_KEY };
+} else if (fs.existsSync(VAPID_FILE)) {
   vapid = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf8'));
 } else {
   vapid = webpush.generateVAPIDKeys();

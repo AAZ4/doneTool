@@ -42,6 +42,15 @@ Der Mitarbeiter-Token steht im URL-Hash (`#t=`) und landet so nicht in Server-Lo
 Node.js, Express, `ws` (WebSockets), `web-push` (VAPID-Schlüssel werden beim ersten Start in `data/` erzeugt), `qrcode`.
 Daten liegen für das MVP in `data/db.json`.
 
+## Online stellen (Render)
+
+1. Repo auf GitHub, in Render **New Web Service** → Repo wählen
+2. Runtime **Node**, Build Command `npm install`, Start Command `npm start`, Instance **Free**
+3. Unter **Environment** `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` und `VAPID_SUBJECT` setzen
+   (lokal erzeugen: `npx web-push generate-vapid-keys`)
+
+Auf der kostenlosen Stufe schläft der Dienst nach 15 Minuten ein, und `data/db.json` geht bei jedem Deploy verloren.
+
 ## Vor dem Livegang
 
 - HTTPS (Pflicht für Push und Wake Lock), `VAPID_SUBJECT` setzen
