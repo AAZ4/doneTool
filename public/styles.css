@@ -161,6 +161,8 @@ h1, h2, h3 { line-height: 1.1; margin: 0 0 .5em; letter-spacing: -0.02em; }
   white-space: nowrap;
 }
 
+button.chip { border: 0; font-family: inherit; cursor: pointer; }
+
 .chip-ready { background: var(--ready-soft); color: var(--ready); }
 .chip-warn { background: var(--warn-soft); color: var(--warn); }
 

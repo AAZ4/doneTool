@@ -44,9 +44,9 @@
     <section class="pane">
       <h2>In Zubereitung</h2>
       <div class="prep-grid" id="prep"></div>
-      <div class="join">
+      <div class="join hidden" id="join">
         <img id="qr" alt="QR-Code zum Scannen">
-        <div><b>Scannen und Platz nehmen</b><span>Dein Handy klingelt, sobald dein Essen fertig ist. Keine App nötig.</span></div>
+        <div><b id="join-title"></b><span>Mit der Handy-Kamera scannen und Platz nehmen. Dein Handy klingelt, sobald dein Essen fertig ist.</span></div>
       </div>
     </section>
   </div>
@@ -100,17 +100,20 @@
         ? prep.map((t) => `<div class="n num">${t.number}</div>`).join('')
         : '<div class="empty">—</div>';
       announce(fresh.map((t) => t.number));
+      renderJoin(tickets);
     }
 
-    // Rotating QR code: a photo of it stops working after a few minutes.
-    async function refreshCode() {
-      try {
-        const { code, expiresAt } = await api(`/api/r/${encodeURIComponent(slug)}/code`, { headers });
-        $('qr').src = qrSrc(`${location.origin}/r/${slug}?k=${code}`);
-        setTimeout(refreshCode, Math.max(2000, expiresAt - Date.now() + 500));
-      } catch {
-        setTimeout(refreshCode, 10000);
-      }
+    // Customer display: shows the QR code of the number the cashier just handed out, until it is scanned.
+    let joinId = null;
+    function renderJoin(tickets) {
+      const pending = tickets
+        .filter((t) => t.claimToken && t.status === 'preparing' && Date.now() - t.createdAt < 5 * 60 * 1000)
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
+      $('join').classList.toggle('hidden', !pending);
+      if (!pending || pending.id === joinId) return;
+      joinId = pending.id;
+      $('join-title').textContent = `Nummer ${pending.number}: jetzt scannen`;
+      $('qr').src = qrSrc(`${location.origin}/r/${slug}?c=${pending.claimToken}`);
     }
 
     connectSocket({ type: 'staff', slug, token }, (msg) => {
@@ -122,7 +125,6 @@
       if (msg.type === 'error') $('ready').innerHTML = '<div class="empty">Kein Zugriff – bitte TV-Link aus der Einrichtung verwenden.</div>';
     });
 
-    refreshCode();
     const tick = () => { $('clock').textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }); };
     tick();
     setInterval(tick, 10000);

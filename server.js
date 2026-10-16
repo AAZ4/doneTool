@@ -111,7 +111,14 @@ function publicTicket(t) {
 }
 
 function staffTicket(t) {
-  return { ...publicTicket(t), source: t.source, hasPush: Boolean(t.push), doneAt: t.doneAt };
+  return {
+    ...publicTicket(t),
+    source: t.source,
+    claimed: t.claimed,
+    claimToken: t.claimToken || null,
+    hasPush: Boolean(t.push),
+    doneAt: t.doneAt,
+  };
 }
 
 function staffState(slug) {
@@ -135,7 +142,10 @@ function newTicket(restaurant, source) {
     slug: restaurant.slug,
     number: restaurant.nextNumber++,
     guestToken: randomToken(),
-    source,
+    source, // 'counter': cashier hands out the number, 'guest': guest scanned a self-service code
+    // Counter numbers are linked to the guest's phone by scanning this one-time code.
+    claimToken: source === 'counter' ? randomToken(9) : null,
+    claimed: source === 'guest',
     status: 'preparing',
     alert: false,
     coming: false,
@@ -321,11 +331,26 @@ app.get('/api/r/:slug/staff', requireStaff, (req, res) => {
   res.json({ ...staffState(req.restaurant.slug), stickerKey: req.restaurant.stickerKey });
 });
 
-// Ticket for a guest without smartphone (number is called out / shown on the TV).
-app.post('/api/r/:slug/manual', requireStaff, (req, res) => {
-  const t = newTicket(req.restaurant, 'manual');
+// Cashier hands out the next number (written on the order slip); the guest links their phone by scanning its QR code.
+app.post('/api/r/:slug/numbers', requireStaff, (req, res) => {
+  const t = newTicket(req.restaurant, 'counter');
   broadcastStaff(t.slug);
   res.status(201).json({ ticket: staffTicket(t) });
+});
+
+app.post('/api/r/:slug/claim', (req, res) => {
+  const r = db.restaurants[req.params.slug];
+  if (!r) return res.status(404).json({ error: 'Laden nicht gefunden' });
+  const code = String(req.body.code || '');
+  const t = code && Object.values(db.tickets).find((x) => x.slug === r.slug && x.claimToken && safeEqual(x.claimToken, code));
+  if (!t) {
+    return res.status(404).json({ error: 'Dieser Code wurde schon gescannt oder ist abgelaufen. Bitte frag an der Kasse nach deiner Nummer.' });
+  }
+  t.claimed = true;
+  t.claimToken = null;
+  save();
+  broadcastTicket(t);
+  res.status(201).json({ ticket: publicTicket(t), guestToken: t.guestToken });
 });
 
 app.post('/api/r/:slug/tickets/:id/status', requireStaff, (req, res) => {

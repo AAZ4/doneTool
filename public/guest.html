@@ -61,7 +61,9 @@
   <script src="/common.js"></script>
   <script>
     const slug = slugFromPath();
-    const key = new URLSearchParams(location.search).get('k');
+    const params = new URLSearchParams(location.search);
+    const key = params.get('k');     // self-service code (sticker / TV)
+    const claim = params.get('c');   // one-time code for a number handed out at the counter
     const storeKey = `done.ticket.${slug}`;
     const app = document.getElementById('app');
     document.getElementById('manifest').href = `/r/${encodeURIComponent(slug)}/manifest.webmanifest`;
@@ -80,19 +82,41 @@
       app.innerHTML = `<div class="center"><div class="emoji">${emoji}</div><h1>${title}</h1><p class="muted">${text}</p></div>`;
     }
 
-    async function init() {
-      // Reuse the existing number (reloads must not create a new one).
-      if (saved) {
-        try {
-          const { ticket: t } = await api(`/api/tickets/${saved.id}`, { headers: { 'x-guest-token': saved.token } });
-          if (t.status !== 'done' || !key) return start(t);
-        } catch { /* expired – fall through */ }
+    async function loadSaved() {
+      if (!saved) return null;
+      try {
+        const { ticket: t } = await api(`/api/tickets/${saved.id}`, { headers: { 'x-guest-token': saved.token } });
+        return t;
+      } catch {
         store(storeKey, null);
         saved = null;
+        return null;
+      }
+    }
+
+    async function init() {
+      // Number handed out at the counter: link this phone to it.
+      if (claim) {
+        try {
+          const res = await api(`/api/r/${encodeURIComponent(slug)}/claim`, { method: 'POST', body: { code: claim } });
+          saved = { id: res.ticket.id, token: res.guestToken };
+          store(storeKey, saved);
+          return start(res.ticket);
+        } catch (err) {
+          // Scanned twice on this phone? Then simply show the number we already have.
+          const t = await loadSaved();
+          if (t && t.status !== 'done') return start(t);
+          return showMessage('🤔', 'Code schon benutzt', escapeHtml(err.message));
+        }
       }
 
+      // Reuse the existing number (reloads must not create a new one).
+      const existing = await loadSaved();
+      if (existing && (existing.status !== 'done' || !key)) return start(existing);
+      if (existing) { store(storeKey, null); saved = null; }
+
       if (!key) {
-        return showMessage('📷', 'Scanne den Code an der Theke', 'Dann bekommst du hier deine Nummer und wir rufen dich, sobald dein Essen fertig ist.');
+        return showMessage('🧾', 'Frag an der Kasse nach deiner Nummer', 'Nach der Bestellung bekommst du dort einen QR-Code. Scanne ihn, dann rufen wir dich hier, sobald dein Essen fertig ist.');
       }
 
       try {

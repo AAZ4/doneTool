@@ -18,16 +18,8 @@
     .row { display: flex; gap: 8px; flex-wrap: wrap; }
     .warn { background: var(--warn-soft); color: var(--warn); border-radius: 14px; padding: 14px 16px; font-weight: 600; margin-top: 8px; }
 
-    /* Printable counter sticker */
-    #sticker { display: none; }
-    @media print {
-      body { background: #fff; }
-      .wrap > *:not(#sticker) { display: none !important; }
-      #sticker { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; color: #000; padding-top: 40px; font-family: var(--font); }
-      #sticker h2 { font-size: 34px; margin: 0; }
-      #sticker img { width: 300px; height: 300px; }
-      #sticker ol { text-align: left; font-size: 18px; }
-    }
+    .howto { margin: 0; padding-left: 20px; display: grid; gap: 8px; color: var(--ink-2); }
+    .howto b { color: var(--ink); }
   </style>
 </head>
 <body>
@@ -38,7 +30,6 @@
       <p class="muted" id="loading">Lade …</p>
     </main>
 
-    <div id="sticker"></div>
   </div>
 
   <script src="/common.js"></script>
@@ -59,12 +50,11 @@
       const origin = location.origin;
       const cashierUrl = `${origin}/k/${slug}#t=${token}`;
       const tvUrl = `${origin}/tv/${slug}#t=${token}`;
-      const guestUrl = `${origin}/r/${slug}?k=${state.stickerKey}`;
       const name = escapeHtml(state.restaurant.name);
 
       main.innerHTML = `
         <h1>${name} ist bereit 🎉</h1>
-        <p class="muted">Drei Dinge, dann kann es losgehen. Speichere diese Seite als Lesezeichen.</p>
+        <p class="muted">Speichere diese Seite als Lesezeichen. Hier findest du deine Links jederzeit wieder.</p>
         <div class="warn">Wer den Kassen- oder TV-Link hat, kann deine Bestellungen steuern. Gib ihn nur an dein Team weiter.</div>
         <div class="grid">
           <section class="card box">
@@ -78,17 +68,18 @@
             </div>
           </section>
           <section class="card box">
-            <h2>2 · QR-Code für die Theke</h2>
-            <p class="muted small">Drucke ihn aus und klebe ihn an die Theke. Gäste scannen ihn nach dem Bezahlen.</p>
-            <img src="${qrSrc(guestUrl)}" alt="QR-Code für Gäste">
-            <div class="row">
-              <button class="btn btn-small" id="print">Aufkleber drucken</button>
-              <a class="btn btn-ghost btn-small" href="${guestUrl}" target="_blank" rel="noopener">Als Gast testen</a>
-            </div>
+            <h2>2 · So läuft es</h2>
+            <ol class="howto">
+              <li>Gast bestellt, du schreibst den Zettel.</li>
+              <li>An der Kasse <b>„+ Neue Nummer“</b> tippen.</li>
+              <li>Die Nummer auf den Zettel schreiben und in die Küche geben.</li>
+              <li>Der Gast scannt den QR-Code auf deinem Bildschirm. Seine Nummer erscheint auf seinem Handy.</li>
+              <li>Essen fertig: bei der Nummer <b>„Fertig“</b> tippen, und sein Handy klingelt.</li>
+            </ol>
           </section>
           <section class="card box">
             <h2>3 · Fernseher (optional)</h2>
-            <p class="muted small">Zeigt fertige Nummern, sagt sie laut an und zeigt einen QR-Code, der sich jede Minute erneuert.</p>
+            <p class="muted small">Zeigt fertige Nummern und sagt sie laut an. Als Kundenanzeige zeigt er auch den QR-Code der gerade vergebenen Nummer, dann muss der Gast nicht auf dein Kassen-Handy schauen.</p>
             <img src="${qrSrc(tvUrl)}" alt="QR-Code für die TV-Anzeige">
             <div class="row">
               <a class="btn btn-small" href="${tvUrl}" target="_blank" rel="noopener">TV-Anzeige öffnen</a>
@@ -97,14 +88,6 @@
           </section>
         </div>`;
 
-      document.getElementById('sticker').innerHTML = `
-        <div class="logo" style="font-size:28px">${logoHtml()}</div>
-        <h2>Wir rufen dich aufs Handy</h2>
-        <img src="${qrSrc(guestUrl)}" alt="">
-        <ol><li>Code scannen</li><li>„Benachrichtigung aktivieren“ tippen</li><li>Platz nehmen – dein Handy klingelt, wenn's fertig ist</li></ol>
-        <div>${name} · Keine App nötig</div>`;
-
-      document.getElementById('print').onclick = () => window.print();
       main.querySelectorAll('[data-copy]').forEach((b) => {
         b.onclick = async () => {
           await navigator.clipboard.writeText(b.dataset.copy);
